@@ -1,6 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import axios, { type AxiosError } from 'axios';
 import { Request, Response } from 'express';
 import { config } from '../config';
+import { IGistCommitItem } from '../interfaces/gist-commit-item';
 
 const gistsBaseUrl = 'https://api.github.com/gists';
 const headers = {
@@ -14,9 +16,24 @@ async function get(req: Request, res: Response) {
       headers,
     });
 
+    const {
+      owner,
+      history,
+      forks,
+      user,
+      url,
+      forks_url,
+      commits_url,
+      git_pull_url,
+      git_push_url,
+      html_url,
+      comments_url,
+      ...rest
+    } = data;
+
     res.status(200).json({
       success: true,
-      data,
+      data: rest,
     });
   } catch (e) {
     if ((e as AxiosError).status === 404) {
@@ -119,4 +136,35 @@ async function del(req: Request, res: Response) {
   }
 }
 
-export { get, create, del, update };
+async function getCommits(req: Request, res: Response) {
+  try {
+    const { data } = await axios.get(`${gistsBaseUrl}/${req.params.id}/commits`, {
+      headers,
+      params: req.query,
+    });
+
+    const cleanData = data.map((x: IGistCommitItem) => {
+      const { user, url, ...rest } = x;
+      return rest;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: cleanData,
+    });
+  } catch (e) {
+    if ((e as AxiosError).status === 404) {
+      res.status(404).json({
+        success: false,
+        message: 'Gist not found',
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Something went wrong',
+      });
+    }
+  }
+}
+
+export { get, create, del, update, getCommits };
