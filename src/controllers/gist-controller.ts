@@ -174,4 +174,50 @@ async function getCommits(req: Request, res: Response) {
   }
 }
 
-export { get, create, del, update, getCommits };
+async function getRevision(req: Request, res: Response) {
+  try {
+    const { data } = await axios.get(`${gistsBaseUrl}/${req.params.id}/${req.params.sha}`, {
+      headers,
+    });
+
+    const {
+      owner,
+      history,
+      forks,
+      user,
+      url,
+      forks_url,
+      commits_url,
+      git_pull_url,
+      git_push_url,
+      html_url,
+      comments_url,
+      ...rest
+    } = data;
+
+    const cleanedFiles = Object.fromEntries(
+      Object.entries(rest.files as Record<string, IGistFile>).map(
+        ([filename, { raw_url, ...fileWithoutRaw }]) => [filename, fileWithoutRaw],
+      ),
+    );
+
+    res.status(200).json({
+      success: true,
+      data: { ...rest, files: cleanedFiles },
+    });
+  } catch (e) {
+    if ((e as AxiosError).status === 404) {
+      res.status(404).json({
+        success: false,
+        message: 'Gist not found',
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Something went wrong',
+      });
+    }
+  }
+}
+
+export { get, create, del, update, getCommits, getRevision };
