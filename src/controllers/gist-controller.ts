@@ -3,6 +3,7 @@ import axios, { type AxiosError } from 'axios';
 import { Request, Response } from 'express';
 import { config } from '../config';
 import { IGistCommitItem } from '../interfaces/gist-commit-item';
+import { IGistFile } from '../interfaces/gist-file';
 
 const gistsBaseUrl = 'https://api.github.com/gists';
 const headers = {
@@ -31,9 +32,15 @@ async function get(req: Request, res: Response) {
       ...rest
     } = data;
 
+    const cleanedFiles = Object.fromEntries(
+      Object.entries(rest.files as Record<string, IGistFile>).map(
+        ([filename, { raw_url, ...fileWithoutRaw }]) => [filename, fileWithoutRaw],
+      ),
+    );
+
     res.status(200).json({
       success: true,
-      data: rest,
+      data: { ...rest, files: cleanedFiles },
     });
   } catch (e) {
     if ((e as AxiosError).status === 404) {
