@@ -274,10 +274,7 @@ async function getRevisionsForFile(req: Request, res: Response) {
           ]);
 
           if (!currentVersion.files[file]) {
-            if (lastVersion.files[file]) {
-              versionsWithChanges.push(currentCommit);
-            }
-            continue;
+            break;
           }
 
           if (!lastVersion.files[file]) {
