@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import axios, { all, type AxiosError } from 'axios';
+import axios, { type AxiosError } from 'axios';
 import { Request, Response } from 'express';
 import { IGistCommitItem } from '../interfaces/gist-commit-item';
 import { IGistFile } from '../interfaces/gist-file';
@@ -59,8 +59,8 @@ async function create(req: Request, res: Response) {
     const { data } = await axios.post(
       gistsBaseUrl,
       {
-        description,
-        public: isGistPublic,
+        description: description || '',
+        public: isGistPublic || false,
         files: {
           [filename]: { content },
         },
@@ -77,7 +77,8 @@ async function create(req: Request, res: Response) {
       success: true,
       data: returnData,
     });
-  } catch {
+  } catch (e) {
+    console.log(e);
     res.status(500).json({
       success: false,
       message: 'Something went wrong',
@@ -89,7 +90,7 @@ async function update(req: Request, res: Response) {
   try {
     const { filename, content } = req.body;
 
-    await axios.patch(
+    const { data } = await axios.patch(
       `${gistsBaseUrl}/${req.params.id}`,
       {
         files: {
@@ -99,7 +100,14 @@ async function update(req: Request, res: Response) {
       { headers },
     );
 
+    let deleted = false;
+    if (!Object.entries(data.files).length) {
+      GistService.deleteGist(req.params.id);
+      deleted = true;
+    }
+
     res.status(200).json({
+      deleted,
       success: true,
       message: 'Gist updated',
     });
@@ -120,9 +128,7 @@ async function update(req: Request, res: Response) {
 
 async function del(req: Request, res: Response) {
   try {
-    await axios.delete(`${gistsBaseUrl}/${req.params.id}`, {
-      headers,
-    });
+    GistService.deleteGist(req.params.id);
 
     res.status(200).json({
       success: true,
@@ -175,7 +181,7 @@ async function getCommits(req: Request, res: Response) {
 
 async function getRevision(req: Request, res: Response) {
   try {
-    const data = await GistService.getRevision(req.params.id, req.params.sha);
+    const data = await GistService.getCommit(req.params.id, req.params.sha);
 
     const {
       owner,
@@ -222,32 +228,100 @@ async function getRevisionsForFile(req: Request, res: Response) {
     const gistId = req.params.id;
     const file = req.params.file;
 
-    const page = req.query.page ? parseInt(req.query.page as string) : undefined;
-    const perPage = req.query.per_page ? parseInt(req.query.per_page as string) : undefined;
+    const cursor = req.query.cursor as string;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
 
-    const allCommits = await GistService.getCommits(gistId, perPage, page);
-    const versionsToExclude: string[] = [];
+    const batchSize = Math.max(limit * 2, 50);
+    let page = 1;
+    let startProcessing = !cursor;
 
-    const promises = allCommits.map((version: IGistCommitItem) =>
-      GistService.getRevision(gistId, version.version).then((revision) => {
-        if (!revision.files[file]) {
-          versionsToExclude.push(version.version);
+    const versionsWithChanges: IGistCommitItem[] = [];
+    let hasMore = true;
+    let nextCursor: string | null = null;
+
+    while (versionsWithChanges.length < limit && hasMore) {
+      const commitsBatch = await GistService.getCommits(gistId, batchSize, page);
+
+      if (commitsBatch.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      for (let i = 0; i < commitsBatch.length && versionsWithChanges.length < limit; i++) {
+        const currentCommit = commitsBatch[i];
+
+        if (!startProcessing) {
+          if (currentCommit.version === cursor) {
+            startProcessing = true;
+          }
+          continue;
         }
-      }),
-    );
 
-    await Promise.all(promises);
+        if (versionsWithChanges.length === 0) {
+          const version = await GistService.getCommit(gistId, currentCommit.version);
+          if (version.files[file]) {
+            versionsWithChanges.push(currentCommit);
+          }
+          continue;
+        }
 
-    const versions = allCommits
-      .filter((v: IGistCommitItem) => !versionsToExclude.includes(v.version))
-      .map((v: IGistCommitItem) => {
-        const { user, url, ...rest } = v;
-        return rest;
-      });
+        const lastAddedCommit = versionsWithChanges[versionsWithChanges.length - 1];
+
+        try {
+          const [lastVersion, currentVersion] = await Promise.all([
+            GistService.getCommit(gistId, lastAddedCommit.version),
+            GistService.getCommit(gistId, currentCommit.version),
+          ]);
+
+          if (!currentVersion.files[file]) {
+            if (lastVersion.files[file]) {
+              versionsWithChanges.push(currentCommit);
+            }
+            continue;
+          }
+
+          if (!lastVersion.files[file]) {
+            versionsWithChanges.push(currentCommit);
+            continue;
+          }
+
+          const lastContent = lastVersion.files[file].content;
+          const currentContent = currentVersion.files[file].content;
+
+          if (lastContent !== currentContent) {
+            versionsWithChanges.push(currentCommit);
+          }
+        } catch (error) {
+          console.error(`Error comparing versions:`, error);
+          versionsWithChanges.push(currentCommit);
+        }
+      }
+
+      if (commitsBatch.length < batchSize) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    if (versionsWithChanges.length === limit) {
+      nextCursor = versionsWithChanges[versionsWithChanges.length - 1].version;
+    }
+
+    const versions = versionsWithChanges.map((v: IGistCommitItem) => {
+      const { user, url, ...rest } = v;
+      return rest;
+    });
 
     res.status(200).json({
       success: true,
       data: versions,
+      pagination: {
+        cursor: nextCursor,
+        hasMore: nextCursor !== null,
+        limit,
+        count: versions.length,
+      },
     });
   } catch (e) {
     if ((e as AxiosError).status === 404) {

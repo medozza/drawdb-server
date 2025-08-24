@@ -2,6 +2,12 @@ import axios from 'axios';
 import { gistsBaseUrl, headers } from '../constants/gist-constants';
 
 export const GistService = {
+  deleteGist: async (gistId: string) => {
+    await axios.delete(`${gistsBaseUrl}/${gistId}`, {
+      headers,
+    });
+  },
+
   getCommits: async (gistId: string, perPage?: number, page?: number) => {
     const { data } = await axios.get(`${gistsBaseUrl}/${gistId}/commits`, {
       headers,
@@ -14,7 +20,7 @@ export const GistService = {
     return data;
   },
 
-  getRevision: async (gistId: string, sha: string) => {
+  getCommit: async (gistId: string, sha: string) => {
     const { data } = await axios.get(`${gistsBaseUrl}/${gistId}/${sha}`, {
       headers,
     });
